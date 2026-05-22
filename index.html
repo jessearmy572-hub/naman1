@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<title>प्रिया AI • Final Stable Avaturn Build</title>
+
+<style>
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    overflow:hidden;
+    background:#000;
+    font-family:Segoe UI,sans-serif;
+    color:#fff;
+}
+
+#bg{
+    position:fixed;
+    inset:0;
+    background:url("https://images.unsplash.com/photo-1506744038136-46273834b3fb?q=80&w=1920")
+    center/cover;
+    filter:brightness(.45);
+    z-index:-2;
+}
+
+#canvas{
+    width:100vw;
+    height:100vh;
+}
+
+.panel{
+    position:fixed;
+    top:15px;
+    left:15px;
+    padding:15px;
+    border-radius:16px;
+    background:rgba(0,0,0,.55);
+    backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.08);
+    z-index:50;
+    min-width:260px;
+}
+
+.title{
+    color:#00ffd5;
+    font-size:18px;
+    font-weight:700;
+    margin-bottom:10px;
+}
+
+.status{
+    font-size:13px;
+    margin-top:8px;
+}
+
+.bottom{
+    position:fixed;
+    left:50%;
+    bottom:20px;
+    transform:translateX(-50%);
+    width:min(92%,720px);
+    display:flex;
+    gap:10px;
+    z-index:50;
+}
+
+input{
+    flex:1;
+    height:58px;
+    border:none;
+    outline:none;
+    border-radius:30px;
+    padding:0 22px;
+    color:#fff;
+    background:rgba(0,0,0,.7);
+    border:1px solid rgba(255,255,255,.1);
+    font-size:15px;
+}
+
+button{
+    width:58px;
+    height:58px;
+    border:none;
+    border-radius:50%;
+    cursor:pointer;
+    font-size:20px;
+    transition:.2s;
+}
+
+button:active{
+    transform:scale(.92);
+}
+
+#mic{
+    background:#ff006e;
+    color:#fff;
+}
+
+#send{
+    background:#fff;
+}
+
+#subtitle{
+    position:fixed;
+    bottom:95px;
+    left:50%;
+    transform:translateX(-50%);
+    padding:12px 20px;
+    border-radius:14px;
+    background:rgba(0,0,0,.75);
+    display:none;
+    z-index:100;
+    max-width:85%;
+    text-align:center;
+}
+
+#loader{
+    position:fixed;
+    inset:0;
+    background:#000;
+    z-index:999;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    flex-direction:column;
+}
+
+.spinner{
+    width:60px;
+    height:60px;
+    border-radius:50%;
+    border:4px solid rgba(255,255,255,.12);
+    border-top-color:#00ffd5;
+    animation:spin 1s linear infinite;
+}
+
+@keyframes spin{
+    to{
+        transform:rotate(360deg);
+    }
+}
+
+#loader p{
+    margin-top:16px;
+    color:#00ffd5;
+}
+</style>
+
+<!-- THREE -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
+
+</head>
+
+<body>
+
+<div id="bg"></div>
+
+<div id="loader">
+    <div class="spinner"></div>
+    <p>प्रिया AI लोड हो रही है...</p>
+</div>
+
+<div class="panel">
+
+    <div class="title">
+        प्रिया AI • Stable Final
+    </div>
+
+    <div class="status">
+        State:
+        <span id="stateTxt">Idle</span>
+    </div>
+
+    <div class="status">
+        Voice:
+        <span id="voiceTxt">Ready</span>
+    </div>
+
+    <div class="status">
+        Avatar:
+        <span id="avatarTxt">Loading...</span>
+    </div>
+
+</div>
+
+<div id="canvas"></div>
+
+<div id="subtitle"></div>
+
+<div class="bottom">
+
+    <button id="mic">🎤</button>
+
+    <input
+        id="input"
+        placeholder="कमांड लिखो..."
+    />
+
+    <button id="send">➜</button>
+
+</div>
+
+<script>
+/* =========================================================
+   CONFIG
+========================================================= */
+
+const MODEL_URL =
+"https://cdn.jsdelivr.net/gh/jessearmy572-hub/naman3@main/model.glb";
+
+/* =========================================================
+   GLOBALS
+========================================================= */
+
+let scene;
+let camera;
+let renderer;
+let controls;
+let clock;
+
+let avatar;
+let mixer;
+
+let mouseX = 0;
+let mouseY = 0;
+
+let smoothX = 0;
+let smoothY = 0;
+
+let currentState = "idle";
+let stateStart = 0;
+
+let speaking = false;
+
+const BONES = {};
+
+let skinnedMeshes = [];
+
+/* =========================================================
+   INIT
+========================================================= */
+
+init();
+animate();
+
+function init(){
+
+    clock = new THREE.Clock();
+
+    scene = new THREE.Scene();
+
+    scene.fog =
+    new THREE.FogExp2(0x000000,.025);
+
+    camera =
+    new THREE.PerspectiveCamera(
+        35,
+        window.innerWidth/window.innerHeight,
+        .1,
+        100
+    );
+
+    camera.position.set(0,.15,1.45);
+
+    renderer =
+    new THREE.WebGLRenderer({
+        antialias:true,
+        alpha:true,
+        powerPreference:"high-performance"
+    });
+
+    renderer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
+
+    renderer.setPixelRatio(
+        Math.min(window.devicePixelRatio,1.5)
+    );
+
+    renderer.outputEncoding =
+    THREE.sRGBEncoding;
+
+    renderer.shadowMap.enabled = true;
+
+    renderer.physicallyCorrectLights = false;
+
+    document
+    .getElementById("canvas")
+    .appendChild(renderer.domElement);
+
+    /* CONTROLS */
+
+    controls =
+    new THREE.OrbitControls(
+        camera,
+        renderer.domElement
+    );
+
+    controls.enablePan = false;
+    controls.enableDamping = true;
+    controls.minDistance = .8;
+    controls.maxDistance = 3;
+
+    /* LIGHTS */
+
+    const hemi =
+    new THREE.HemisphereLight(
+        0xffffff,
+        0x111122,
+        2
+    );
+
+    scene.add(hemi);
+
+    const dir =
+    new THREE.DirectionalLight(
+        0xffffff,
+        1.5
+    );
+
+    dir.position.set(2,5,3);
+
+    dir.castShadow = true;
+
+    scene.add(dir);
+
+    /* FLOOR */
+
+    const floor =
+    new THREE.Mesh(
+        new THREE.PlaneGeometry(20,20),
+        new THREE.ShadowMaterial({
+            opacity:.4
+        })
+    );
+
+    floor.rotation.x = -Math.PI/2;
+    floor.position.y = -.92;
+
+    floor.receiveShadow = true;
+
+    scene.add(floor);
+
+    /* MODEL */
+
+    loadAvatar();
+
+    /* EVENTS */
+
+    window.addEventListener(
+        "resize",
+        onResize
+    );
+
+    window.addEventListener(
+        "mousemove",
+        onMouseMove
+    );
+
+    document
+    .getElementById("send")
+    .onclick = submitCommand;
+
+    document
+    .getElementById("input")
+    .addEventListener(
+        "keypress",
+        e=>{
+            if(e.key==="Enter")
+                submitCommand();
+        }
+    );
+
+    setupSpeech();
+}
+
+/* =========================================================
+   LOAD MODEL
+========================================================= */
+
+function loadAvatar(){
+
+    const loader =
+    new THREE.GLTFLoader();
+
+    loader.load(
+
+        MODEL_URL,
+
+        gltf=>{
+
+            avatar = gltf.scene;
+
+            avatar.position.y = -.92;
+
+            avatar.scale.set(1.18,1.18,1.18);
+
+            avatar.traverse(obj=>{
+
+                /* MESH */
+
+                if(obj.isMesh){
+
+                    obj.castShadow = true;
+                    obj.receiveShadow = true;
+
+                    if(obj.material){
+
+                        obj.material.envMapIntensity = 1.8;
+                        obj.material.needsUpdate = true;
+                    }
+                }
+
+                /* BONES */
+
+                if(obj.isBone){
+
+                    BONES[
+                        obj.name.toLowerCase()
+                    ] = obj;
+
+                    console.log(
+                        "BONE:",
+                        obj.name
+                    );
+                }
+
+                /* MORPHS */
+
+                if(
+                    obj.isMesh &&
+                    obj.morphTargetDictionary
+                ){
+
+                    skinnedMeshes.push(obj);
+
+                    console.log(
+                        "MORPHS:",
+                        obj.morphTargetDictionary
+                    );
+                }
+            });
+
+            /* ANIMATIONS */
+
+            if(gltf.animations.length){
+
+                mixer =
+                new THREE.AnimationMixer(
+                    avatar
+                );
+
+                gltf.animations.forEach(anim=>{
+
+                    mixer
+                    .clipAction(anim)
+                    .play();
+                });
+            }
+
+            scene.add(avatar);
+
+            document
+            .getElementById("avatarTxt")
+            .innerText = "Loaded";
+
+            document
+            .getElementById("loader")
+            .style.display = "none";
+        },
+
+        undefined,
+
+        err=>{
+
+            console.error(err);
+
+            alert("Model load failed");
+        }
+    );
+}
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function getBone(...names){
+
+    for(let n of names){
+
+        if(BONES[n]) return BONES[n];
+    }
+
+    return null;
+}
+
+/* =========================================================
+   MOUSE
+========================================================= */
+
+function onMouseMove(e){
+
+    mouseX =
+    (e.clientX/window.innerWidth)*2-1;
+
+    mouseY =
+    -(e.clientY/window.innerHeight)*2+1;
+}
+
+/* =========================================================
+   COMMANDS
+========================================================= */
+
+function submitCommand(){
+
+    const input =
+    document.getElementById("input");
+
+    const txt =
+    input.value.trim();
+
+    if(!txt) return;
+
+    input.value = "";
+
+    parseCommand(txt);
+}
+
+function parseCommand(text){
+
+    const t =
+    text.toLowerCase();
+
+    if(
+        t.includes("hello") ||
+        t.includes("hi") ||
+        t.includes("नमस्ते")
+    ){
+
+        setState("greet");
+
+        speak("नमस्ते! कैसे हो?");
+    }
+
+    else if(
+        t.includes("dance") ||
+        t.includes("डांस")
+    ){
+
+        setState("dance");
+
+        speak("मैं डांस कर रही हूँ");
+    }
+
+    else if(
+        t.includes("sad") ||
+        t.includes("उदास")
+    ){
+
+        setState("sad");
+
+        speak("मुझे थोड़ा दुख हो रहा है");
+    }
+
+    else if(
+        t.includes("angry") ||
+        t.includes("गुस्सा")
+    ){
+
+        setState("angry");
+
+        speak("मुझे गुस्सा मत दिलाओ");
+    }
+
+    else{
+
+        setState("smile");
+
+        speak("मैं आपकी बात समझ गई");
+    }
+}
+
+function setState(name){
+
+    currentState = name;
+
+    stateStart =
+    clock.getElapsedTime();
+
+    document
+    .getElementById("stateTxt")
+    .innerText = name;
+}
+
+/* =========================================================
+   SPEECH
+========================================================= */
+
+function speak(text){
+
+    if(!window.speechSynthesis)
+        return;
+
+    speechSynthesis.cancel();
+
+    const sub =
+    document.getElementById(
+        "subtitle"
+    );
+
+    sub.innerText = text;
+
+    sub.style.display = "block";
+
+    const u =
+    new SpeechSynthesisUtterance(
+        text
+    );
+
+    u.lang = "hi-IN";
+
+    u.onstart = ()=>{
+
+        speaking = true;
+
+        document
+        .getElementById("voiceTxt")
+        .innerText = "Speaking";
+    };
+
+    u.onend = ()=>{
+
+        speaking = false;
+
+        sub.style.display = "none";
+
+        document
+        .getElementById("voiceTxt")
+        .innerText = "Ready";
+
+        setState("idle");
+    };
+
+    speechSynthesis.speak(u);
+}
+
+/* =========================================================
+   SPEECH RECOGNITION
+========================================================= */
+
+let recognition;
+
+function setupSpeech(){
+
+    const SR =
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition;
+
+    if(!SR) return;
+
+    recognition = new SR();
+
+    recognition.lang = "hi-IN";
+
+    recognition.onresult = e=>{
+
+        const txt =
+        e.results[0][0].transcript;
+
+        document
+        .getElementById("input")
+        .value = txt;
+
+        parseCommand(txt);
+    };
+
+    document
+    .getElementById("mic")
+    .onclick = ()=>{
+
+        try{
+
+            recognition.stop();
+            recognition.start();
+
+        }catch(err){
+
+            console.log(err);
+        }
+    };
+}
+
+/* =========================================================
+   BLINK
+========================================================= */
+
+function updateBlink(elapsed){
+
+    const blink =
+    Math.sin(elapsed*.7) > .995
+    ? 1
+    : 0;
+
+    skinnedMeshes.forEach(mesh=>{
+
+        const dict =
+        mesh.morphTargetDictionary;
+
+        const inf =
+        mesh.morphTargetInfluences;
+
+        if(!dict) return;
+
+        [
+            "eyeBlinkLeft",
+            "eyeBlinkRight",
+            "eyesClosed"
+        ].forEach(name=>{
+
+            if(dict[name] !== undefined){
+
+                inf[
+                    dict[name]
+                ] = blink;
+            }
+        });
+    });
+}
+
+/* =========================================================
+   LIPSYNC
+========================================================= */
+
+function updateLipSync(power){
+
+    skinnedMeshes.forEach(mesh=>{
+
+        const dict =
+        mesh.morphTargetDictionary;
+
+        const inf =
+        mesh.morphTargetInfluences;
+
+        if(!dict) return;
+
+        [
+            "viseme_aa",
+            "viseme_oh",
+            "viseme_E",
+            "viseme_U",
+            "jawOpen"
+        ].forEach(name=>{
+
+            if(dict[name] !== undefined){
+
+                inf[
+                    dict[name]
+                ] = power;
+            }
+        });
+    });
+}
+
+/* =========================================================
+   STATES
+========================================================= */
+
+function updateStates(elapsed){
+
+    if(!avatar) return;
+
+    const t =
+    elapsed-stateStart;
+
+    const head =
+    getBone(
+        "head",
+        "head_01"
+    );
+
+    const spine =
+    getBone(
+        "spine",
+        "spine1"
+    );
+
+    const leftArm =
+    getBone(
+        "leftarm",
+        "upperarm_l"
+    );
+
+    const rightArm =
+    getBone(
+        "rightarm",
+        "upperarm_r"
+    );
+
+    /* IDLE */
+
+    avatar.position.y =
+    -.92 +
+    Math.sin(elapsed*1.5)*.01;
+
+    avatar.rotation.z =
+    Math.sin(elapsed*.8)*.01;
+
+    if(spine){
+
+        spine.rotation.x =
+        Math.sin(elapsed*1.6)*.01;
+    }
+
+    /* HEAD TRACK */
+
+    smoothX +=
+    (mouseX-smoothX)*.05;
+
+    smoothY +=
+    (mouseY-smoothY)*.05;
+
+    if(head){
+
+        head.rotation.y =
+        THREE.MathUtils.clamp(
+            smoothX*.4,
+            -.5,
+            .5
+        );
+
+        head.rotation.x =
+        THREE.MathUtils.clamp(
+            -smoothY*.2,
+            -.3,
+            .3
+        );
+    }
+
+    /* STATES */
+
+    switch(currentState){
+
+        case "greet":
+
+            if(rightArm){
+
+                rightArm.rotation.z =
+                Math.PI/2.3;
+
+                rightArm.rotation.x =
+                Math.sin(t*5)*.2;
+            }
+
+            break;
+
+        case "dance":
+
+            avatar.rotation.y =
+            Math.sin(t*4)*.15;
+
+            if(leftArm){
+
+                leftArm.rotation.x =
+                Math.sin(t*4)*.5;
+            }
+
+            if(rightArm){
+
+                rightArm.rotation.x =
+                -Math.sin(t*4)*.5;
+            }
+
+            break;
+
+        case "sad":
+
+            if(head){
+
+                head.rotation.x = .3;
+            }
+
+            break;
+
+        case "angry":
+
+            if(head){
+
+                head.rotation.x = .1;
+            }
+
+            if(leftArm){
+
+                leftArm.rotation.z = -.5;
+            }
+
+            if(rightArm){
+
+                rightArm.rotation.z = .5;
+            }
+
+            break;
+
+        case "smile":
+
+            avatar.rotation.y =
+            Math.sin(t*2)*.05;
+
+            break;
+    }
+}
+
+/* =========================================================
+   ANIMATE
+========================================================= */
+
+function animate(){
+
+    requestAnimationFrame(
+        animate
+    );
+
+    const delta =
+    clock.getDelta();
+
+    const elapsed =
+    clock.getElapsedTime();
+
+    if(mixer){
+
+        mixer.update(delta);
+    }
+
+    controls.update();
+
+    updateStates(elapsed);
+
+    updateBlink(elapsed);
+
+    const lipPower =
+    speaking
+    ?
+    (
+        Math.sin(elapsed*20)*.4
+        +
+        .4
+    )
+    :
+    0;
+
+    updateLipSync(lipPower);
+
+    renderer.render(
+        scene,
+        camera
+    );
+}
+
+/* =========================================================
+   RESIZE
+========================================================= */
+
+function onResize(){
+
+    camera.aspect =
+    window.innerWidth/
+    window.innerHeight;
+
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
+}
+</script>
+
+</body>
+          </html>
